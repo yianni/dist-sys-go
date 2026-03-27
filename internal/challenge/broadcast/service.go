@@ -1,0 +1,111 @@
+package broadcast
+
+import (
+	"sort"
+	"sync"
+
+	"dist-sys-go/internal/platform/maelstromx"
+)
+
+type Service struct {
+	selfID  maelstromx.NodeIDFunc
+	nodeIDs maelstromx.NodeIDsFunc
+
+	mu       sync.RWMutex
+	messages map[int]struct{}
+	peers    []string
+}
+
+func NewService(selfID maelstromx.NodeIDFunc, nodeIDs maelstromx.NodeIDsFunc) *Service {
+	return &Service{
+		selfID:   selfID,
+		nodeIDs:  nodeIDs,
+		messages: make(map[int]struct{}),
+	}
+}
+
+func (s *Service) Add(message int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.messages[message]; exists {
+		return false
+	}
+
+	s.messages[message] = struct{}{}
+	return true
+}
+
+func (s *Service) Merge(messages []int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	changed := false
+	for _, message := range messages {
+		if _, exists := s.messages[message]; exists {
+			continue
+		}
+
+		s.messages[message] = struct{}{}
+		changed = true
+	}
+
+	return changed
+}
+
+func (s *Service) Messages() []int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]int, 0, len(s.messages))
+	for message := range s.messages {
+		result = append(result, message)
+	}
+
+	sort.Ints(result)
+	return result
+}
+
+func (s *Service) ConfigureTopology(topology map[string][]string) {
+	self := s.selfID()
+	peers := uniqueStrings(topology[self])
+	if len(peers) == 0 {
+		peers = s.defaultPeers()
+	}
+
+	s.mu.Lock()
+	s.peers = peers
+	s.mu.Unlock()
+}
+
+func (s *Service) Peers() []string {
+	s.mu.RLock()
+	if len(s.peers) > 0 {
+		peers := append([]string(nil), s.peers...)
+		s.mu.RUnlock()
+		return peers
+	}
+	s.mu.RUnlock()
+
+	return s.defaultPeers()
+}
+
+func (s *Service) defaultPeers() []string {
+	return uniqueStrings(maelstromx.Peers(s.selfID, s.nodeIDs))
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, exists := seen[value]; exists {
+			continue
+		}
+
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+
+	sort.Strings(result)
+	return result
+}
