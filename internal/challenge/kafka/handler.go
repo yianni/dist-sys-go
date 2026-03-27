@@ -1,6 +1,8 @@
 package kafka
 
 import (
+	"errors"
+
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 
 	"dist-sys-go/internal/platform/maelstromx"
@@ -56,6 +58,10 @@ func (h Handler) HandleCommitOffsets(msg maelstrom.Message) error {
 
 	resp, err := h.coordinator.CommitOffsets(req.Offsets)
 	if err != nil {
+		var invalidCommit invalidCommitError
+		if errors.As(err, &invalidCommit) {
+			return maelstrom.NewRPCError(13, invalidCommit.Error())
+		}
 		return err
 	}
 
@@ -101,7 +107,14 @@ func (h Handler) HandleCommitOffsetsLocal(msg maelstrom.Message) error {
 		return err
 	}
 
-	h.service.CommitOffsets(req.Offsets)
+	if err := h.service.CommitOffsets(req.Offsets); err != nil {
+		var invalidCommit invalidCommitError
+		if errors.As(err, &invalidCommit) {
+			return maelstrom.NewRPCError(13, invalidCommit.Error())
+		}
+
+		return err
+	}
 	return h.node.Reply(msg, commitOffsetsResponse{Type: "commit_offsets_ok"})
 }
 

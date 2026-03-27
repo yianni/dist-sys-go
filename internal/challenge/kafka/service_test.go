@@ -48,16 +48,54 @@ func TestServiceCommitOffsetsOnlyMovesForward(t *testing.T) {
 		func() []string { return []string{"n0", "n1"} },
 	)
 
-	service.CommitOffsets(map[string]int{"k1": 10})
-	service.CommitOffsets(map[string]int{"k1": 8})
+	service.Send("k1", 11)
+	service.Send("k1", 22)
+	service.Send("k1", 33)
 
-	if got := service.ListCommittedOffsets([]string{"k1"})["k1"]; got != 10 {
-		t.Fatalf("committed offset = %d, want 10", got)
+	if err := service.CommitOffsets(map[string]int{"k1": 1}); err != nil {
+		t.Fatalf("CommitOffsets() error = %v", err)
+	}
+	if err := service.CommitOffsets(map[string]int{"k1": 0}); err != nil {
+		t.Fatalf("CommitOffsets() error = %v", err)
 	}
 
-	service.CommitOffsets(map[string]int{"k1": 12})
-	if got := service.ListCommittedOffsets([]string{"k1"})["k1"]; got != 12 {
-		t.Fatalf("committed offset = %d, want 12", got)
+	if got := service.ListCommittedOffsets([]string{"k1"})["k1"]; got != 1 {
+		t.Fatalf("committed offset = %d, want 1", got)
+	}
+
+	if err := service.CommitOffsets(map[string]int{"k1": 2}); err != nil {
+		t.Fatalf("CommitOffsets() error = %v", err)
+	}
+	if got := service.ListCommittedOffsets([]string{"k1"})["k1"]; got != 2 {
+		t.Fatalf("committed offset = %d, want 2", got)
+	}
+}
+
+func TestServiceCommitOffsetsRejectsUnknownStream(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(
+		func() string { return "n0" },
+		func() []string { return []string{"n0", "n1"} },
+	)
+
+	if err := service.CommitOffsets(map[string]int{"missing": 0}); err == nil {
+		t.Fatal("CommitOffsets() error = nil, want error for unknown stream")
+	}
+}
+
+func TestServiceCommitOffsetsRejectsOffsetsPastStreamEnd(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(
+		func() string { return "n0" },
+		func() []string { return []string{"n0", "n1"} },
+	)
+
+	service.Send("k1", 11)
+
+	if err := service.CommitOffsets(map[string]int{"k1": 1}); err == nil {
+		t.Fatal("CommitOffsets() error = nil, want error for out-of-range offset")
 	}
 }
 

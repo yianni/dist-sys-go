@@ -1,6 +1,7 @@
 package kafka
 
 import (
+	"fmt"
 	"hash/fnv"
 	"sort"
 	"sync"
@@ -12,6 +13,20 @@ type streamState struct {
 	records          []logRecord
 	committedOffset  int
 	hasCommittedRead bool
+}
+
+type invalidCommitError struct {
+	key       string
+	offset    int
+	logLength int
+}
+
+func (e invalidCommitError) Error() string {
+	if e.logLength == 0 {
+		return fmt.Sprintf("cannot commit offset %d for empty stream %q", e.offset, e.key)
+	}
+
+	return fmt.Sprintf("cannot commit offset %d for stream %q with length %d", e.offset, e.key, e.logLength)
 }
 
 type Service struct {
@@ -84,18 +99,32 @@ func (s *Service) Poll(offsets map[string]int) map[string][]logRecord {
 	return msgs
 }
 
-func (s *Service) CommitOffsets(offsets map[string]int) {
+func (s *Service) CommitOffsets(offsets map[string]int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for _, key := range sortedMapKeys(offsets) {
-		stream := s.stream(key)
+		stream, ok := s.streams[key]
+		offset := offsets[key]
+		logLength := 0
+		if ok {
+			logLength = len(stream.records)
+		}
+		if !ok || logLength == 0 || offset < 0 || offset >= logLength {
+			return invalidCommitError{key: key, offset: offset, logLength: logLength}
+		}
+	}
+
+	for _, key := range sortedMapKeys(offsets) {
+		stream := s.streams[key]
 		offset := offsets[key]
 		if !stream.hasCommittedRead || offset > stream.committedOffset {
 			stream.committedOffset = offset
 			stream.hasCommittedRead = true
 		}
 	}
+
+	return nil
 }
 
 func (s *Service) ListCommittedOffsets(keys []string) map[string]int {

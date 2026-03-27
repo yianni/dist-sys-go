@@ -73,6 +73,66 @@ func TestVersionAfter(t *testing.T) {
 	}
 }
 
+func TestServiceMergeConvergesRegardlessOfDeliveryOrder(t *testing.T) {
+	t.Parallel()
+
+	left := NewService(
+		func() string { return "n0" },
+		func() []string { return []string{"n0", "n1"} },
+	)
+	right := NewService(
+		func() string { return "n1" },
+		func() []string { return []string{"n0", "n1"} },
+	)
+
+	leftWrites := []writeState{
+		{Key: 1, Value: 3, Version: version{Counter: 1, NodeID: "n0"}},
+		{Key: 2, Value: 7, Version: version{Counter: 2, NodeID: "n0"}},
+	}
+	rightWrites := []writeState{
+		{Key: 1, Value: 9, Version: version{Counter: 2, NodeID: "n1"}},
+		{Key: 3, Value: 4, Version: version{Counter: 1, NodeID: "n1"}},
+	}
+
+	left.Merge(leftWrites)
+	left.Merge(rightWrites)
+
+	right.Merge(rightWrites)
+	right.Merge(leftWrites)
+
+	if got, want := left.SnapshotWrites(), right.SnapshotWrites(); !slices.Equal(got, want) {
+		t.Fatalf("left snapshot = %v, right snapshot = %v, want equal snapshots", got, want)
+	}
+}
+
+func TestServiceDrainDirtyWritesReturnsLatestPerKey(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(
+		func() string { return "n0" },
+		func() []string { return []string{"n0", "n1"} },
+	)
+
+	service.Apply([]operation{{Kind: "w", Key: 1, Value: intPtr(3)}})
+	service.Apply([]operation{{Kind: "w", Key: 1, Value: intPtr(5)}, {Kind: "w", Key: 2, Value: intPtr(7)}})
+
+	dirty := service.DrainDirtyWrites()
+	if len(dirty) != 2 {
+		t.Fatalf("DrainDirtyWrites() len = %d, want 2", len(dirty))
+	}
+
+	if got, want := dirty[0].Value, 5; got != want {
+		t.Fatalf("dirty[0].Value = %d, want %d", got, want)
+	}
+	if got, want := dirty[1].Value, 7; got != want {
+		t.Fatalf("dirty[1].Value = %d, want %d", got, want)
+	}
+
+	if got := service.DrainDirtyWrites(); len(got) != 0 {
+		t.Fatalf("DrainDirtyWrites() = %v, want empty after drain", got)
+	}
+}
+
 func equalOperation(left, right operation) bool {
 	if left.Kind != right.Kind || left.Key != right.Key {
 		return false

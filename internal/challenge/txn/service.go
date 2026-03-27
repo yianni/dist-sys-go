@@ -31,6 +31,7 @@ type Service struct {
 
 	mu    sync.RWMutex
 	store map[int]registerState
+	dirty map[int]writeState
 	peers []string
 }
 
@@ -39,6 +40,7 @@ func NewService(selfID maelstromx.NodeIDFunc, nodeIDs maelstromx.NodeIDsFunc) *S
 		selfID:  selfID,
 		nodeIDs: nodeIDs,
 		store:   make(map[int]registerState),
+		dirty:   make(map[int]writeState),
 	}
 }
 
@@ -67,6 +69,7 @@ func (s *Service) Apply(txn []operation) ([]operation, []writeState) {
 			ver := s.nextVersion()
 			state := registerState{Value: *op.Value, Version: ver}
 			s.store[op.Key] = state
+			s.dirty[op.Key] = writeState{Key: op.Key, Value: *op.Value, Version: ver}
 			value := *op.Value
 			result = append(result, operation{Kind: op.Kind, Key: op.Key, Value: &value})
 			writes = append(writes, writeState{Key: op.Key, Value: value, Version: ver})
@@ -90,6 +93,7 @@ func (s *Service) Merge(writes []writeState) bool {
 		}
 
 		s.store[write.Key] = registerState{Value: write.Value, Version: write.Version}
+		s.dirty[write.Key] = write
 		changed = true
 	}
 
@@ -112,6 +116,29 @@ func (s *Service) SnapshotWrites() []writeState {
 		writes = append(writes, writeState{Key: key, Value: state.Value, Version: state.Version})
 	}
 
+	return writes
+}
+
+func (s *Service) DrainDirtyWrites() []writeState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.dirty) == 0 {
+		return nil
+	}
+
+	keys := make([]int, 0, len(s.dirty))
+	for key := range s.dirty {
+		keys = append(keys, key)
+	}
+	sort.Ints(keys)
+
+	writes := make([]writeState, 0, len(keys))
+	for _, key := range keys {
+		writes = append(writes, s.dirty[key])
+	}
+
+	clear(s.dirty)
 	return writes
 }
 

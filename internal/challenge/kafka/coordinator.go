@@ -60,7 +60,9 @@ func (c Coordinator) CommitOffsets(offsets map[string]int) (commitOffsetsRespons
 	groups := c.groupOffsetsByOwner(offsets)
 	for owner, ownedOffsets := range groups {
 		if owner == c.node.ID() {
-			c.service.CommitOffsets(ownedOffsets)
+			if err := c.service.CommitOffsets(ownedOffsets); err != nil {
+				return commitOffsetsResponse{}, err
+			}
 			continue
 		}
 
